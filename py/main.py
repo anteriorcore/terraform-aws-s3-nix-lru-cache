@@ -1,0 +1,223 @@
+# Copyright © 2026 Anterior <tech@anterior.com>
+# SPDX-License-Identifier: AGPL-3.0-only
+"""
+This walks every file to delete them if they haven't been selected to be
+saved by the access logs.  The access logs are pruned with lifecycle
+rules, thereby we only have pointers to the last n days of accessed files
+in the cache.  I also considered using tags or mtime or object protection
+to save objects and maybe use lifecycle to delete the other ones but each
+has its own issue.
+
+mtime: Can't update the time or version of an object without doing a
+    literal PUT operation
+
+tags: Can only do lifecycle on tags existing or their values.  So we'd
+    have to apply the "delete" tag or something to every object and then
+    delete it from the ones we want to save and then there's a race
+    condition with the lifecycle rule.
+
+object protection: We have to specify for how long to keep it protected.
+    Now we have the logs which specify which files to save in the last
+    month and then another parameter of how long to keep them? Do we
+    check how long it's been in the logs and then compute how much longer
+    to save or ??. Complicated and annoying.
+"""
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+import aioboto3
+import types_aiobotocore_s3
+from types_aiobotocore_s3.service_resource import ObjectSummary
+
+DEBUG = True
+logger = logging.getLogger(__name__)
+
+CACHE_NAME = "test-nix-cache-038462749198-us-west-2-an"
+CACHE_LOGS_NAME = "test-nix-cache-logs-038462749198-us-west-2-an"
+KEEP_SMALLER_THAN = (2**10) ** 3
+ACCOUNT = "038462749198"
+REGION = "us-west-2"
+# consider taking a list of roles to ignore.
+ROLE = "arn:aws:sts::038462749198:assumed-role/clean-test-cache-nix-role-u4nqs38y/clean-test-cache-nix"
+N_WORKERS = 50
+
+
+async def parse_logs_obj(
+    obj: types_aiobotocore_s3.service_resource.ObjectSummary,
+) -> set[str]:
+    lines: list[str] = []
+    async with (await obj.get())["Body"] as body:
+        lines = (await body.read()).decode("utf-8").strip().split("\n")
+    lines_split = (x.split(" ") for x in lines)
+    o: set[str] = set()
+    for x in lines_split:
+        logger.debug(f"{ROLE=} logs_role={x[5]} ignored={ROLE in x[5]}")
+        # ignore the cleaner script iam role
+        if ROLE not in x[5]:
+            o.add(x[8])
+    return o
+
+
+async def parse_worker(
+    parse_q: asyncio.Queue[types_aiobotocore_s3.service_resource.ObjectSummary],
+    out: set[str],
+) -> None:
+    while True:
+        try:
+            obj = await parse_q.get()
+        except asyncio.QueueShutDown:
+            return
+        # update is GIL safe
+        out |= await parse_logs_obj(obj)
+        parse_q.task_done()
+
+
+async def del_if_not_whitelisted(
+    obj: ObjectSummary,
+    save: set[str],
+) -> None:
+    if obj.key in save | {"nix-cache-info"}:
+        logger.debug(f"saving {obj.key} from deletion because whitelist")
+        return
+    if (size := await obj.size) < KEEP_SMALLER_THAN:
+        logger.debug(
+            f"saving {obj.key} from deletion because {
+                size=} < {KEEP_SMALLER_THAN}"
+        )
+        return
+    # Takes a while to propagate the access logs, so spare everything written
+    # in the last day
+    if (
+        datetime.now(timezone.utc) - (last_modified := await obj.last_modified)
+    ).days < 1:
+        logger.debug(
+            f"saving {obj.key} from deletion because {
+                last_modified=} within the last day"
+        )
+        return
+
+    logger.debug(f"deleting {obj.key}")
+    _ = await obj.delete()
+
+
+async def del_worker(
+    obj_q: asyncio.Queue[ObjectSummary],
+    save: set[str],
+) -> None:
+    while True:
+        try:
+            obj = await obj_q.get()
+        except asyncio.QueueShutDown:
+            return
+        await del_if_not_whitelisted(obj, save)
+        obj_q.task_done()
+
+
+# i would instead pass the getter fn by partially applying the bucket name to
+# get_object, but the typing is atrocious
+async def get_and_parse_narinfo(
+    s3c: types_aiobotocore_s3.Client,
+    bucket: str,
+    narinfo_name: str,
+) -> str | None:
+    try:
+        narinfo = await s3c.get_object(Bucket=bucket, Key=narinfo_name)
+    except s3c.exceptions.NoSuchKey:
+        return None
+    async with narinfo["Body"] as f:
+        lines = (await f.read()).decode("utf-8").strip().split("\n")
+    return lines[1].split("URL: ")[1]
+
+
+async def narinfo_worker(
+    narinfo_name_q: asyncio.Queue[str],
+    s3c: types_aiobotocore_s3.Client,
+    bucket: str,
+    out: set[str],
+) -> None:
+    while True:
+        try:
+            narinfo_name = await narinfo_name_q.get()
+        except asyncio.QueueShutDown:
+            return
+        parsed = await get_and_parse_narinfo(s3c, bucket, narinfo_name)
+        if parsed is not None:
+            out.add(parsed)
+        narinfo_name_q.task_done()
+
+
+async def main() -> None:
+    logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+
+    session = aioboto3.Session()
+
+    s3r: types_aiobotocore_s3.ServiceResource
+    s3c: types_aiobotocore_s3.Client
+    async with session.resource("s3") as s3r, session.client("s3") as s3c:
+        bucket = await s3r.Bucket(CACHE_LOGS_NAME)
+
+        # 1a. get logs phase including binaries to whitelist, and narinfo to
+        # whitelist and follow
+        logs_out: set[str] = set()
+        parse_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(maxsize=N_WORKERS)
+
+        async def enqueue_parse() -> None:
+            async for parse_job in bucket.objects.filter(
+                Prefix=f"{ACCOUNT}/{REGION}/{CACHE_NAME}/"
+            ):
+                await parse_q.put(parse_job)
+            parse_q.shutdown()
+
+        _ = await asyncio.gather(
+            enqueue_parse(),
+            *(parse_worker(parse_q, logs_out) for _ in range(N_WORKERS)),
+        )
+        logger.debug("logs_out=")
+        for log in logs_out:
+            logger.debug(log)
+
+        # 1b. follow narinfo files and add to whitelist
+        nar_out: set[str] = set()
+        nar_q: asyncio.Queue[str] = asyncio.Queue(maxsize=N_WORKERS)
+
+        async def enqueue_nar() -> None:
+            for narinfo in filter(lambda e: ".narinfo" in e, logs_out):
+                await nar_q.put(narinfo)
+            nar_q.shutdown()
+
+        _ = await asyncio.gather(
+            enqueue_nar(),
+            *(
+                narinfo_worker(nar_q, s3c, CACHE_NAME, nar_out)
+                for _ in range(N_WORKERS)
+            ),
+        )
+        logger.debug("nar_out=")
+        for nar in nar_out:
+            logger.debug(nar)
+
+        save = nar_out | logs_out
+        logger.debug("save=")
+        for s in save:
+            logger.debug(s)
+
+        # 2. deletion phase, saving whitelisted files
+        cache = await s3r.Bucket(CACHE_NAME)
+        delete_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(maxsize=N_WORKERS)
+
+        async def enqueue_delete() -> None:
+            async for x in cache.objects.filter(Prefix=""):
+                await delete_q.put(x)
+            delete_q.shutdown()
+
+        _ = await asyncio.gather(
+            enqueue_delete(),
+            *(del_worker(delete_q, save) for _ in range(N_WORKERS)),
+        )
+
+
+def aws_lambda(*args: str, **kwargs: dict[str, Any]) -> None:
+    asyncio.run(main())
