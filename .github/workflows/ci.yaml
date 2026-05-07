@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  merge_group:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  nocommit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: nobssoftware/nocommit@5c3cf9519fe40b80b0954d254085b67b532a5dc3
+
+  nix-flake-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04-arm
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          key: "nix-eval-cache-${{ runner.os }}-${{ runner.arch }}"
+          path: "~/.cache/nix"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f
+      - run: nix run .#nix-flake-check-changed
+
+  nix-flake-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f
+      - run: nix flake show
+      - run: nix flake lock --no-update-lock-file
+      - run: nix flake check --no-build
