@@ -1,0 +1,47 @@
+name: CD
+
+on:
+  push:
+    branches: 
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04-arm
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          key: "nix-eval-cache-${{ runner.os }}-${{ runner.arch }}"
+          path: "~/.cache/nix"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f
+      - run: |
+          nix build -L .#lambda-zip
+          cp ./result/package.zip ./
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          path: ./package.zip
+          name: "${{ runner.arch }}-${{ runner.os }}-package.zip"
+      - name: set tag to latest
+        # The state of tags and their relationship to releases on github is
+        # crazy. I just want an action that lets me publish a zip, but I need a
+        # release which needs a tag which needs to be immutable by default.
+        # But I don't want a tag per push to master.  So here we are.
+        run: |
+          # latest-X64-Linux or latest-ARM64-Linux
+          git tag -f "latest-${{ runner.arch }}-${{ runner.os }}"
+          git push origin "latest-${{ runner.arch }}-${{ runner.os }}" --force
+      - name: release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: "latest-${{ runner.arch }}-${{ runner.os }}"
+          files: package.zip
