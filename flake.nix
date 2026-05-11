@@ -43,7 +43,6 @@
         ./nix/treefmt.nix
         allSystems
         inputs.tools.flakeModules.checkBuildAll
-        # inputs.tools.conventional-commit
         inputs.treefmt-nix.flakeModule
         # keep-sorted end
       ];
