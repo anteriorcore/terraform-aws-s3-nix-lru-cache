@@ -9,6 +9,7 @@
         enable = true;
         strict = true;
       };
+      terraform.enable = true;
       # keep-sorted end
     };
   };

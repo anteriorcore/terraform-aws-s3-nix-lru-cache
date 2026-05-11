@@ -1,5 +1,7 @@
 # s3-nix-lru-cache
 
+[s3-nix-lru-cache](https://github.com/anteriorcore/terraform-aws-s3-nix-lru-cache).
+
 Terraform Module for a serverless [Nix](https://nixos.org) LRU [S3 binary
 cache](https://nix.dev/manual/nix/2.23/store/types/s3-binary-cache-store).  Runs
 fully in your own AWS Account.  Unlike other self-hosted caches, there is no
@@ -18,10 +20,10 @@ a FIFO cache, for example, purges items based on when they were _added_.
 >
 > Common LRU cache implementations allow specifying a maximum cache size, and
 > pruning least-recently-used elements until the total cache size drops below
-> that size.  This implementation does not support such a configuration; rather,
-> it prunes all items which haven't been used in a (configurable) timeframe
-> (e.g.  1 month).  This is not a fundamental limitation; it just happens to be
-> what we needed.
+> that size.  This implementation does not support such a configuration;
+> rather, it prunes all items which haven't been used in a (configurable)
+> timeframe (e.g.  1 month).  This is not a fundamental limitation; it just
+> happens to be what we needed.
 
 The idea is to deploy this in your own AWS account, giving you billing,
 colocation, and simplicity benefits.
@@ -31,7 +33,9 @@ LICENSE), but with zero warranty or guarantees.
 
 If you want to use these tools we advise reading the license and forking the repo.
 
-## Use / Explore
+## Development
+
+To explore, checkout the repo and run:
 
 ```command
 $ nix flake show
@@ -51,4 +55,4 @@ s3-nix-lru-cache is authored by [Anterior](https://anterior.com), based in NYC, 
 
 The code is available under the AGPLv3 license (not later).
 
-See the [LICENSE](LICENSE) file.
+See the [LICENSE](./LICENSE) file.
