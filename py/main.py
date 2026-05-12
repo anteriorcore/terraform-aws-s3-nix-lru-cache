@@ -24,11 +24,14 @@ object protection: We have to specify for how long to keep it protected.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from functools import partial
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 import aioboto3
+from aiobotocore.response import StreamingBody
 import types_aiobotocore_s3
 from types_aiobotocore_s3.service_resource import ObjectSummary
 
@@ -45,12 +48,31 @@ ROLE = "arn:aws:sts::038462749198:assumed-role/clean-test-cache-nix-role-u4nqs38
 N_WORKERS = 50
 
 
-async def parse_logs_obj(
-    obj: types_aiobotocore_s3.service_resource.ObjectSummary,
-) -> set[str]:
-    lines: list[str] = []
-    async with (await obj.get())["Body"] as body:
-        lines = (await body.read()).decode("utf-8").strip().split("\n")
+async def create_worker[P, R](
+    fn: Callable[[P], Awaitable[R]],
+    q: asyncio.Queue[P],
+    update_fn: Callable[[R], None]
+) -> None:
+    while True:
+        try:
+            input = await q.get()
+        except asyncio.QueueShutDown:
+            return
+        update_fn(await fn(input))
+        q.task_done()
+
+
+class HasStreamingBody(TypedDict):
+    Body: StreamingBody
+
+
+async def read_obj_lines(obj: HasStreamingBody) -> list[str]:
+    async with obj["Body"] as body:
+        return (await body.read()).decode("utf-8").strip().split("\n")
+
+
+async def parse_logs_obj(obj: ObjectSummary) -> set[str]:
+    lines = await read_obj_lines(await obj.get())
     lines_split = (x.split(" ") for x in lines)
     o: set[str] = set()
     for x in lines_split:
@@ -59,20 +81,6 @@ async def parse_logs_obj(
         if ROLE not in x[5]:
             o.add(x[8])
     return o
-
-
-async def parse_worker(
-    parse_q: asyncio.Queue[types_aiobotocore_s3.service_resource.ObjectSummary],
-    out: set[str],
-) -> None:
-    while True:
-        try:
-            obj = await parse_q.get()
-        except asyncio.QueueShutDown:
-            return
-        # update is GIL safe
-        out |= await parse_logs_obj(obj)
-        parse_q.task_done()
 
 
 async def del_if_not_whitelisted(
@@ -103,50 +111,19 @@ async def del_if_not_whitelisted(
     _ = await obj.delete()
 
 
-async def del_worker(
-    obj_q: asyncio.Queue[ObjectSummary],
-    save: set[str],
-) -> None:
-    while True:
-        try:
-            obj = await obj_q.get()
-        except asyncio.QueueShutDown:
-            return
-        await del_if_not_whitelisted(obj, save)
-        obj_q.task_done()
-
-
 # i would instead pass the getter fn by partially applying the bucket name to
 # get_object, but the typing is atrocious
 async def get_and_parse_narinfo(
+    narinfo_name: str,
     s3c: types_aiobotocore_s3.Client,
     bucket: str,
-    narinfo_name: str,
 ) -> str | None:
     try:
         narinfo = await s3c.get_object(Bucket=bucket, Key=narinfo_name)
     except s3c.exceptions.NoSuchKey:
         return None
-    async with narinfo["Body"] as f:
-        lines = (await f.read()).decode("utf-8").strip().split("\n")
+    lines = await read_obj_lines(narinfo)
     return lines[1].split("URL: ")[1]
-
-
-async def narinfo_worker(
-    narinfo_name_q: asyncio.Queue[str],
-    s3c: types_aiobotocore_s3.Client,
-    bucket: str,
-    out: set[str],
-) -> None:
-    while True:
-        try:
-            narinfo_name = await narinfo_name_q.get()
-        except asyncio.QueueShutDown:
-            return
-        parsed = await get_and_parse_narinfo(s3c, bucket, narinfo_name)
-        if parsed is not None:
-            out.add(parsed)
-        narinfo_name_q.task_done()
 
 
 async def main() -> None:
@@ -173,8 +150,16 @@ async def main() -> None:
 
         _ = await asyncio.gather(
             enqueue_parse(),
-            *(parse_worker(parse_q, logs_out) for _ in range(N_WORKERS)),
+            *(create_worker(
+                fn=parse_logs_obj,
+                q=parse_q,
+                update_fn=logs_out.update,
+            ) for _ in range(N_WORKERS)),
         )
+        # This debug log and the similar ones below are fairly unconventional.
+        # They are closer to TRACE or print debugging, but still useful for
+        # now.  Can't all be one log becuase it will overrun the allowed log
+        # message size.
         logger.debug("logs_out=")
         for log in logs_out:
             logger.debug(log)
@@ -188,10 +173,17 @@ async def main() -> None:
                 await nar_q.put(narinfo)
             nar_q.shutdown()
 
+        def update_fn_nar(parsed: str | None) -> None:
+            if parsed is not None:
+                nar_out.add(parsed)
+
         _ = await asyncio.gather(
             enqueue_nar(),
-            *(
-                narinfo_worker(nar_q, s3c, CACHE_NAME, nar_out)
+            *(create_worker(
+                    fn=partial(get_and_parse_narinfo, s3c=s3c, bucket=CACHE_NAME),
+                    q=nar_q,
+                    update_fn=update_fn_nar,
+            )
                 for _ in range(N_WORKERS)
             ),
         )
@@ -215,7 +207,12 @@ async def main() -> None:
 
         _ = await asyncio.gather(
             enqueue_delete(),
-            *(del_worker(delete_q, save) for _ in range(N_WORKERS)),
+            *(create_worker(
+                    fn=partial(del_if_not_whitelisted, save=save),
+                    q=delete_q,
+                    update_fn=lambda _: None,  # nop
+                  )
+                for _ in range(N_WORKERS)),
         )
 
 
