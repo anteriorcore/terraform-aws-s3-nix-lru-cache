@@ -2,7 +2,7 @@ name: CI
 
 on:
   merge_group:
-  push:
+  pull_request:
 
 permissions:
   contents: read
