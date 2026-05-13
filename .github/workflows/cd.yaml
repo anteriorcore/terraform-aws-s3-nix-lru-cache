@@ -45,3 +45,23 @@ jobs:
         with:
           tag_name: "latest-${{ runner.arch }}-${{ runner.os }}"
           files: package.zip
+
+      # just do the following one time, not for every item in the matrix 
+      - run: nix install .#next-semver
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: auto tag for terraform
+        # turns out, terraform requires semver tags to publish public modules
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          v="$(next-semver)"
+          printf "tagging with %s" "$v"
+          echo "SEMVER_TAG=${v}" >> $GITHUB_ENV
+          git tag "$v"
+          git push origin "$v"
+      - name: semver release
+        # might as well also release a historical immutable copy...
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: "$SEMVER_TAG"
+          files: package.zip

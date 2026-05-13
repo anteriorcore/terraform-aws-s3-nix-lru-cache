@@ -52,6 +52,7 @@
             packages = {
               inherit (inputs'.tools.packages) conventional-commit nix-flake-check-changed nix-grep-to-build;
               inherit (py) s3-nix-lru-cache lambda-zip;
+              next-semver = pkgs.callPackage ./next-semver.nix { };
             };
           };
       };
