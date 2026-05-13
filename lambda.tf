@@ -62,10 +62,11 @@ resource "aws_lambda_function" "cleanup_lambda" {
 
   environment {
     variables = tomap({
-      ACCOUNT         = data.aws_caller_identity.current.account_id
       CACHE_LOGS_NAME = aws_s3_bucket.logs_bucket.id
       CACHE_NAME      = aws_s3_bucket.cache_bucket.id
-      REGION          = data.aws_region.current.region
+      LOG_LEVEL       = var.lambda_log_level
+      # the access logs are saved with the following prefix for the cache
+      LOGS_KEY_PREFIX = "${data.aws_caller_identity.current.account_id}/${data.aws_region.current.region}/${aws_s3_bucket.cache_bucket.id}/"
       # A bit hokey, but the actual "assumed role" that shows up in the access logs is this thing.
       ROLE = "arn:aws:sts::${data.aws_caller_identity.current.account_id}:assumed-role/${aws_iam_role.lambda_iam_role.name}/${local.lambda_fn_name}"
     })

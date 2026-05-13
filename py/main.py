@@ -25,9 +25,10 @@ object protection: We have to specify for how long to keep it protected.
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from functools import partial
 import logging
-from datetime import datetime, timezone
+import os
 from typing import Any, TypedDict
 
 import aioboto3
@@ -35,16 +36,9 @@ from aiobotocore.response import StreamingBody
 import types_aiobotocore_s3
 from types_aiobotocore_s3.service_resource import ObjectSummary
 
-DEBUG = True
 logger = logging.getLogger(__name__)
 
-CACHE_NAME = "test-nix-cache-038462749198-us-west-2-an"
-CACHE_LOGS_NAME = "test-nix-cache-logs-038462749198-us-west-2-an"
 KEEP_SMALLER_THAN = (2**10) ** 3
-ACCOUNT = "038462749198"
-REGION = "us-west-2"
-# consider taking a list of roles to ignore.
-ROLE = "arn:aws:sts::038462749198:assumed-role/clean-test-cache-nix-role-u4nqs38y/clean-test-cache-nix"
 N_WORKERS = 50
 
 
@@ -71,14 +65,14 @@ async def read_obj_lines(obj: HasStreamingBody) -> list[str]:
         return (await body.read()).decode("utf-8").strip().split("\n")
 
 
-async def parse_logs_obj(obj: ObjectSummary) -> set[str]:
+async def parse_logs_obj(obj: ObjectSummary, role: str) -> set[str]:
     lines = await read_obj_lines(await obj.get())
     lines_split = (x.split(" ") for x in lines)
     o: set[str] = set()
     for x in lines_split:
-        logger.debug(f"{ROLE=} logs_role={x[5]} ignored={ROLE in x[5]}")
+        logger.debug(f"{role=} logs_role={x[5]} ignored={role in x[5]}")
         # ignore the cleaner script iam role
-        if ROLE not in x[5]:
+        if role not in x[5]:
             o.add(x[8])
     return o
 
@@ -126,24 +120,32 @@ async def get_and_parse_narinfo(
     return lines[1].split("URL: ")[1]
 
 
-async def main() -> None:
-    logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+async def main(
+    *,
+    cache_logs_name: str,
+    cache_name: str,
+    logs_key_prefix: str,
+    log_level: str,
+    role: str,
+) -> None:
+    logger.setLevel(log_level)
 
     session = aioboto3.Session()
 
     s3r: types_aiobotocore_s3.ServiceResource
     s3c: types_aiobotocore_s3.Client
     async with session.resource("s3") as s3r, session.client("s3") as s3c:
-        bucket = await s3r.Bucket(CACHE_LOGS_NAME)
+        bucket = await s3r.Bucket(cache_logs_name)
 
         # 1a. get logs phase including binaries to whitelist, and narinfo to
         # whitelist and follow
         logs_out: set[str] = set()
-        parse_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(maxsize=N_WORKERS)
+        parse_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(
+            maxsize=N_WORKERS)
 
         async def enqueue_parse() -> None:
             async for parse_job in bucket.objects.filter(
-                Prefix=f"{ACCOUNT}/{REGION}/{CACHE_NAME}/"
+                Prefix=logs_key_prefix,
             ):
                 await parse_q.put(parse_job)
             parse_q.shutdown()
@@ -151,14 +153,14 @@ async def main() -> None:
         _ = await asyncio.gather(
             enqueue_parse(),
             *(create_worker(
-                fn=parse_logs_obj,
+                fn=partial(parse_logs_obj, role=role),
                 q=parse_q,
                 update_fn=logs_out.update,
             ) for _ in range(N_WORKERS)),
         )
         # This debug log and the similar ones below are fairly unconventional.
         # They are closer to TRACE or print debugging, but still useful for
-        # now.  Can't all be one log becuase it will overrun the allowed log
+        # now.  Can't all be one log because it will overrun the allowed log
         # message size.
         logger.debug("logs_out=")
         for log in logs_out:
@@ -180,9 +182,9 @@ async def main() -> None:
         _ = await asyncio.gather(
             enqueue_nar(),
             *(create_worker(
-                    fn=partial(get_and_parse_narinfo, s3c=s3c, bucket=CACHE_NAME),
-                    q=nar_q,
-                    update_fn=update_fn_nar,
+                fn=partial(get_and_parse_narinfo, s3c=s3c, bucket=cache_name),
+                q=nar_q,
+                update_fn=update_fn_nar,
             )
                 for _ in range(N_WORKERS)
             ),
@@ -197,8 +199,9 @@ async def main() -> None:
             logger.debug(s)
 
         # 2. deletion phase, saving whitelisted files
-        cache = await s3r.Bucket(CACHE_NAME)
-        delete_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(maxsize=N_WORKERS)
+        cache = await s3r.Bucket(cache_name)
+        delete_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(
+            maxsize=N_WORKERS)
 
         async def enqueue_delete() -> None:
             async for x in cache.objects.filter(Prefix=""):
@@ -208,13 +211,21 @@ async def main() -> None:
         _ = await asyncio.gather(
             enqueue_delete(),
             *(create_worker(
-                    fn=partial(del_if_not_whitelisted, save=save),
-                    q=delete_q,
-                    update_fn=lambda _: None,  # nop
-                  )
+                fn=partial(del_if_not_whitelisted, save=save),
+                q=delete_q,
+                update_fn=lambda _: None,  # nop
+            )
                 for _ in range(N_WORKERS)),
         )
 
 
 def aws_lambda(*args: str, **kwargs: dict[str, Any]) -> None:
-    asyncio.run(main())
+    asyncio.run(
+        main(
+            cache_logs_name=os.environ["CACHE_LOGS_NAME"],
+            cache_name=os.environ["CACHE_NAME"],
+            log_level=os.environ["LOG_LEVEL"],
+            logs_key_prefix=os.environ["LOGS_KEY_PREFIX"],
+            role=os.environ["ROLE"],
+        )
+    )

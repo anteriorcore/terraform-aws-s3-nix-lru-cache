@@ -26,6 +26,16 @@ variable "lambda_schedule" {
   description = "When to run the lambda function.  This is NOT the same as your cache retention.  Should probably be about every day or more frequent."
 }
 
+variable "lambda_log_level" {
+  type        = string
+  description = "Set the Python Lambda log level. Must be one of CRITICAL, ERROR, WARNING, INFO, DEBUG"
+  default     = "DEBUG"
+  validation {
+    condition     = contains(["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"], var.lambda_log_level)
+    error_message = "Must be one of CRITICAL, ERROR, WARNING, INFO, DEBUG."
+  }
+}
+
 # optional vpc config
 variable "lambda_vpc" {
   type = object({
