@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 terraform {
-  required_version = "~> 1.14.0"
+  required_version = "~> 1.12.2"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -18,7 +18,3 @@ terraform {
     }
   }
 }
-
-provider "aws" {}
-provider "http" {}
-provider "random" {}
