@@ -47,7 +47,7 @@ jobs:
           files: package.zip
 
       # just do the following one time, not for every item in the matrix 
-      - run: nix install .#next-semver
+      - run: nix profile install .#next-semver
         if: ${{ matrix.os == 'ubuntu-latest' }}
       - name: auto tag for terraform
         # turns out, terraform requires semver tags to publish public modules
