@@ -9,6 +9,8 @@
         enable = true;
         strict = true;
       };
+      ruff-check.enable = true;
+      ruff-format.enable = true;
       terraform.enable = true;
       # keep-sorted end
     };

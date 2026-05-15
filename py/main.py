@@ -24,16 +24,16 @@ object protection: We have to specify for how long to keep it protected.
 """
 
 import asyncio
+import logging
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
-import logging
-import os
 from typing import Any, TypedDict
 
 import aioboto3
-from aiobotocore.response import StreamingBody
 import types_aiobotocore_s3
+from aiobotocore.response import StreamingBody
 from types_aiobotocore_s3.service_resource import ObjectSummary
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ N_WORKERS = 50
 async def create_worker[P, R](
     fn: Callable[[P], Awaitable[R]],
     q: asyncio.Queue[P],
-    update_fn: Callable[[R], None]
+    update_fn: Callable[[R], None],
 ) -> None:
     while True:
         try:
@@ -140,8 +140,7 @@ async def main(
         # 1a. get logs phase including binaries to whitelist, and narinfo to
         # whitelist and follow
         logs_out: set[str] = set()
-        parse_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(
-            maxsize=N_WORKERS)
+        parse_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(maxsize=N_WORKERS)
 
         async def enqueue_parse() -> None:
             async for parse_job in bucket.objects.filter(
@@ -152,11 +151,14 @@ async def main(
 
         _ = await asyncio.gather(
             enqueue_parse(),
-            *(create_worker(
-                fn=partial(parse_logs_obj, role=role),
-                q=parse_q,
-                update_fn=logs_out.update,
-            ) for _ in range(N_WORKERS)),
+            *(
+                create_worker(
+                    fn=partial(parse_logs_obj, role=role),
+                    q=parse_q,
+                    update_fn=logs_out.update,
+                )
+                for _ in range(N_WORKERS)
+            ),
         )
         # This debug log and the similar ones below are fairly unconventional.
         # They are closer to TRACE or print debugging, but still useful for
@@ -181,11 +183,14 @@ async def main(
 
         _ = await asyncio.gather(
             enqueue_nar(),
-            *(create_worker(
-                fn=partial(get_and_parse_narinfo, s3c=s3c, bucket=cache_name),
-                q=nar_q,
-                update_fn=update_fn_nar,
-            )
+            *(
+                create_worker(
+                    fn=partial(
+                        get_and_parse_narinfo, s3c=s3c, bucket=cache_name
+                    ),
+                    q=nar_q,
+                    update_fn=update_fn_nar,
+                )
                 for _ in range(N_WORKERS)
             ),
         )
@@ -201,7 +206,8 @@ async def main(
         # 2. deletion phase, saving whitelisted files
         cache = await s3r.Bucket(cache_name)
         delete_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(
-            maxsize=N_WORKERS)
+            maxsize=N_WORKERS
+        )
 
         async def enqueue_delete() -> None:
             async for x in cache.objects.filter(Prefix=""):
@@ -210,12 +216,14 @@ async def main(
 
         _ = await asyncio.gather(
             enqueue_delete(),
-            *(create_worker(
-                fn=partial(del_if_not_whitelisted, save=save),
-                q=delete_q,
-                update_fn=lambda _: None,  # nop
-            )
-                for _ in range(N_WORKERS)),
+            *(
+                create_worker(
+                    fn=partial(del_if_not_whitelisted, save=save),
+                    q=delete_q,
+                    update_fn=lambda _: None,  # nop
+                )
+                for _ in range(N_WORKERS)
+            ),
         )
 
 

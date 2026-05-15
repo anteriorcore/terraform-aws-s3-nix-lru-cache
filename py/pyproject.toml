@@ -22,3 +22,12 @@ include = ["main.py", "py.typed"]
 
 [tool.mypy]
 strict = true
+
+[tool.ruff]
+line-length = 80
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
