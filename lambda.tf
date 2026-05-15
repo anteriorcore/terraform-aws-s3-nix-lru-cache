@@ -24,7 +24,7 @@ resource "aws_iam_role_policy_attachment" "vpc_lambda_policy_attachment" {
 
 resource "aws_iam_policy" "bucket_access_lambda_policy" {
   policy = data.aws_iam_policy_document.bucket_access_lambda_policy.json
-  name   = "s3-nix-lru-cache-bucket_access_lambda_policy"
+  name   = "s3-nix-lru-cache-bucket_access_lambda_policy-${local.slug}"
 }
 data "aws_iam_policy_document" "bucket_access_lambda_policy" {
   statement {
