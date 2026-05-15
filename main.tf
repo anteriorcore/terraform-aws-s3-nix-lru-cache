@@ -20,8 +20,8 @@ data "http" "package_zip" {
   }
 }
 resource "aws_s3_bucket" "s3_nix_lru_cache_lambda_assets" {
-  # account region namespace
-  bucket = format("s3-nix-lru-cache-lambda-assets-%s-%s-%s-an",
+  # account region namespace.  0-63 name length for buckets.
+  bucket = format("nix-lru-assets-%s-%s-%s-an",
     local.slug,
     data.aws_caller_identity.current.account_id,
     data.aws_region.current.region,
