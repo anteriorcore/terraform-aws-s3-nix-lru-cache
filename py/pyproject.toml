@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "aioboto3>=15.5.0",
-    "types-aiobotocore-s3>=3.6.0",
+    "types-aiobotocore-s3>=3.7.0",
 ]
 
 [dependency-groups]
