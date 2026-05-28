@@ -9,7 +9,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "mypy>=2.0.0",
+    "mypy>=2.1.0",
     "types-aioboto3[s3]>=13.2.0.post3",
 ]
 
