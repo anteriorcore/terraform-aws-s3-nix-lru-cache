@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 resource "aws_iam_role" "lambda_iam_role" {
-  name               = "s3-nix-lru-cache-lambda-role-${local.slug}"
+  name               = "s3-nix-lru-cache-lambda-role--${var.cache_bucket_name}"
   assume_role_policy = data.aws_iam_policy_document.assume_role_lambda_policy.json
 }
 data "aws_iam_policy_document" "assume_role_lambda_policy" {
@@ -24,7 +24,7 @@ resource "aws_iam_role_policy_attachment" "vpc_lambda_policy_attachment" {
 
 resource "aws_iam_policy" "bucket_access_lambda_policy" {
   policy = data.aws_iam_policy_document.bucket_access_lambda_policy.json
-  name   = "s3-nix-lru-cache-bucket_access_lambda_policy-${local.slug}"
+  name   = "s3-nix-lru-cache-bucket_access_lambda_policy--${var.cache_bucket_name}"
 }
 data "aws_iam_policy_document" "bucket_access_lambda_policy" {
   statement {
@@ -44,7 +44,7 @@ resource "aws_iam_role_policy_attachment" "bucket_access_lambda_policy_attachmen
 }
 
 locals {
-  lambda_fn_name = "s3-nix-lru-cache-${local.slug}"
+  lambda_fn_name = "s3-nix-lru-cache--${var.cache_bucket_name}"
 }
 resource "aws_lambda_function" "cleanup_lambda" {
   role             = aws_iam_role.lambda_iam_role.arn

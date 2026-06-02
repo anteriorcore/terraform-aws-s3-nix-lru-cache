@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 resource "aws_scheduler_schedule" "daily-schedule" {
-  name = "trigger-s3-nix-lru-cache-cleanup-${local.slug}"
+  name = "trigger-s3-nix-lru-cache-cleanup--${var.cache_bucket_name}"
 
   schedule_expression = var.lambda_schedule
   flexible_time_window {
@@ -17,7 +17,7 @@ resource "aws_scheduler_schedule" "daily-schedule" {
 }
 
 resource "aws_iam_role" "scheduler_iam_role" {
-  name               = "s3-nix-lru-cache-scheduler-role-${local.slug}"
+  name               = "s3-nix-lru-cache-scheduler-role--${var.cache_bucket_name}"
   assume_role_policy = data.aws_iam_policy_document.scheduler_assume_role_policy_document.json
 }
 data "aws_iam_policy_document" "scheduler_assume_role_policy_document" {
@@ -32,7 +32,7 @@ data "aws_iam_policy_document" "scheduler_assume_role_policy_document" {
 }
 
 resource "aws_iam_policy" "scheduler_trigger_lambda_policy" {
-  name   = "s3-nix-lru-cache-scheduler-policy-${local.slug}"
+  name   = "s3-nix-lru-cache-scheduler-policy--${var.cache_bucket_name}"
   policy = data.aws_iam_policy_document.scheduler-trigger-lambda-policy-document.json
 }
 data "aws_iam_policy_document" "scheduler-trigger-lambda-policy-document" {

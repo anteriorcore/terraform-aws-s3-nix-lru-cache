@@ -3,7 +3,7 @@
 
 variable "cache_bucket_name" {
   type        = string
-  description = "Name of the cache bucket.  Is appended with a random slug and your account ID etc to make it a regional namespace.  Is also used to name the aceess log bucket."
+  description = "Name of the cache bucket.  It is appended with your account ID etc to make it a regional namespace.  Is also used to name the aceess log bucket."
   default     = "nix-lru-cache"
 }
 

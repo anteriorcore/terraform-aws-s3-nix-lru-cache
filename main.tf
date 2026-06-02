@@ -7,12 +7,6 @@
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-resource "random_pet" "slug" {
-}
-locals {
-  slug = random_pet.slug.id
-}
-
 data "http" "package_zip" {
   url = var.lambda_zip_source
   request_headers = {
@@ -20,9 +14,9 @@ data "http" "package_zip" {
   }
 }
 resource "aws_s3_bucket" "s3_nix_lru_cache_lambda_assets" {
-  # account region namespace.  0-63 name length for buckets.
-  bucket = format("nix-lru-assets-%s-%s-%s-an",
-    local.slug,
+  # account region namespace
+  bucket = format("%s--assets-%s-%s-an",
+    var.cache_bucket_name,
     data.aws_caller_identity.current.account_id,
     data.aws_region.current.region,
   )

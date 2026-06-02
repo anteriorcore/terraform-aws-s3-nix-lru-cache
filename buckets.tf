@@ -3,9 +3,8 @@
 
 resource "aws_s3_bucket" "cache_bucket" {
   # account region namespace
-  bucket = format("%s-%s-%s-%s-an",
+  bucket = format("%s--%s-%s-an",
     var.cache_bucket_name,
-    local.slug,
     data.aws_caller_identity.current.account_id,
     data.aws_region.current.region,
   )
@@ -19,9 +18,8 @@ resource "aws_s3_bucket_versioning" "cache_bucket_versioning" {
 }
 
 resource "aws_s3_bucket" "logs_bucket" {
-  bucket = format("%s-%s-logs-%s-%s-an",
+  bucket = format("%s--logs-%s-%s-an",
     var.cache_bucket_name,
-    local.slug,
     data.aws_caller_identity.current.account_id,
     data.aws_region.current.region,
   )
