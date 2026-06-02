@@ -3,8 +3,14 @@
 
 variable "cache_bucket_name" {
   type        = string
-  description = "Name of the cache bucket.  It is appended with your account ID etc to make it a regional namespace.  Is also used to name the aceess log bucket."
+  description = "Name of the cache bucket.  It is optionally appended with your account ID, region, and 'an' to make it a regional namespace (see cache_bucket_account_regional).  Is also used to name the aceess log bucket."
   default     = "nix-lru-cache"
+}
+
+variable "cache_bucket_account_regional" {
+  type        = bool
+  description = "If the cache bucket should be made account regional (by appending -accountID-region-an )."
+  default     = true
 }
 
 variable "retention_days" {

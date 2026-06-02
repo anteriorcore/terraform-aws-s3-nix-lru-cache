@@ -1,14 +1,15 @@
 # Copyright © 2026 Anterior <tech@anterior.com>
 # SPDX-License-Identifier: AGPL-3.0-only
 
+locals {
+  bucket_suffix = var.cache_bucket_account_regional ? (
+    "--${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
+  ) : ""
+}
 resource "aws_s3_bucket" "cache_bucket" {
   # account region namespace
-  bucket = format("%s--%s-%s-an",
-    var.cache_bucket_name,
-    data.aws_caller_identity.current.account_id,
-    data.aws_region.current.region,
-  )
-  bucket_namespace = "account-regional" # requires aws v6.37
+  bucket           = "${var.cache_bucket_name}${local.bucket_suffix}"
+  bucket_namespace = var.cache_bucket_account_regional ? "account-regional" : "global"
 }
 resource "aws_s3_bucket_versioning" "cache_bucket_versioning" {
   bucket = aws_s3_bucket.cache_bucket.id
