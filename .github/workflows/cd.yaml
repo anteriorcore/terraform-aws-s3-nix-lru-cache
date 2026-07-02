@@ -41,7 +41,7 @@ jobs:
           git tag -f "latest-${{ runner.arch }}-${{ runner.os }}"
           git push origin "latest-${{ runner.arch }}-${{ runner.os }}" --force
       - name: release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
         with:
           tag_name: "latest-${{ runner.arch }}-${{ runner.os }}"
           files: package.zip
@@ -61,7 +61,7 @@ jobs:
       - name: semver release
         # might as well also release a historical immutable copy...
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
         with:
           tag_name: ${{ env.SEMVER_TAG }}
           files: package.zip
