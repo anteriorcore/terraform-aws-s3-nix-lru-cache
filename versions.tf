@@ -6,11 +6,11 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~>6.37" # v6.37 for account regional namespace
+      version = ">=6.37" # v6.37 for account regional namespace
     }
     http = {
       source  = "hashicorp/http"
-      version = "~>3.5.0"
+      version = ">=3.5.0"
     }
   }
 }
