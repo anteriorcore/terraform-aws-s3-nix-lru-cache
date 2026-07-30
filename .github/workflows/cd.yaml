@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  publish:
+  publish-lambda:
     strategy:
       fail-fast: false
       matrix:
@@ -17,6 +17,8 @@ jobs:
           - ubuntu-24.04-arm
           - ubuntu-latest
     runs-on: ${{ matrix.os }}
+    outputs:
+      SEMVER_TAG: ${{steps.semver.outputs.SEMVER_TAG}}
     steps:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -32,10 +34,10 @@ jobs:
           path: ./package.zip
           name: "${{ runner.arch }}-${{ runner.os }}-package.zip"
       - name: set tag to latest
-        # The state of tags and their relationship to releases on github is
-        # crazy. I just want an action that lets me publish a zip, but I need a
-        # release which needs a tag which needs to be immutable by default.
-        # But I don't want a tag per push to master.  So here we are.
+        # not sure how much this is needed anymore, but these tags always have
+        # the latest lambda code.  Changed the terraform code from using this as
+        # the lambda source because when the zip changed, users of the module
+        # would have drift even when they didn't upgrade the module version.
         run: |
           # latest-X64-Linux or latest-ARM64-Linux
           git tag -f "latest-${{ runner.arch }}-${{ runner.os }}"
@@ -46,22 +48,48 @@ jobs:
           tag_name: "latest-${{ runner.arch }}-${{ runner.os }}"
           files: package.zip
 
-      # just do the following one time, not for every item in the matrix 
       - run: nix profile install .#next-semver
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-      - name: auto tag for terraform
-        # turns out, terraform requires semver tags to publish public modules
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: auto tag for terraform lambda
+        id: semver
         run: |
           v="$(next-semver)"
           printf "tagging with %s" "$v"
           echo "SEMVER_TAG=${v}" >> $GITHUB_ENV
-          git tag "$v"
-          git push origin "$v"
-      - name: semver release
-        # might as well also release a historical immutable copy...
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+          echo "SEMVER_TAG=${v}" >> $GITHUB_OUTPUT # ok to overwrite with the same value
+          git tag "$v-${{ runner.arch }}-${{ runner.os }}"
+          git push origin "$v"-${{ runner.arch }}-${{ runner.os }}
+      - name: semver package release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
-          tag_name: ${{ env.SEMVER_TAG }}
+          tag_name: "${{ env.SEMVER_TAG }}-${{ runner.arch }}-${{ runner.os }}"
           files: package.zip
+
+  # turns out, terraform requires semver tags to publish public modules
+  terraform-release:
+    needs: publish-lambda
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          key: "nix-eval-cache-${{ runner.os }}-${{ runner.arch }}"
+          path: "~/.cache/nix"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342
+      - run: nix profile install .#blockinfile
+      - env: 
+          SEMVER_TAG: ${{needs.publish-lambda.outputs.SEMVER_TAG}}
+        name: set tf version in tf code
+        # terraform module doesn't natively know its own version. inject it
+        # like this and commit back to master.
+        run: blockinfile --marker '  # {mark} MANAGED VERSION' --path ./variables.tf --block "  version = \"${SEMVER_TAG}\""
+      - name: commit changes with semver tag for tf
+        # worth noting that this doesn't recurse because GitHub doesn't run new
+        # workflows on commits made with the (default provided) GITHUB_TOKEN.
+        # If you replace that with a PAT in this workflow, it will break.
+        # See https://github.com/stefanzweifel/git-auto-commit-action#commits-made-by-this-action-do-not-trigger-new-workflow-runs
+        uses: stefanzweifel/git-auto-commit-action@4b4693c596717de5c939cfa92b1b0b5c8676537f
+        with:
+          commit_message: "chore: automated release ${{needs.publish-lambda.outputs.SEMVER_TAG}}"
+          file_pattern: "./variables.tf"
+          # this tag also is what publishes the module to terraform
+          tag_name: "${{needs.publish-lambda.outputs.SEMVER_TAG}}"
