@@ -55,6 +55,14 @@ variable "lambda_vpc" {
 
 variable "lambda_zip_source" {
   type        = string
-  default     = "https://github.com/anteriorcore/terraform-aws-s3-nix-lru-cache/releases/download/latest-X64-Linux/package.zip"
+  default     = "https://github.com/anteriorcore/terraform-aws-s3-nix-lru-cache/releases/download/${local.version}-X64-Linux/package.zip"
   description = "Where to download the zip bundle to upload to s3 and use as the lambda source for cleaning the cache.  The default is the latest build artifact from this repo."
+}
+
+
+locals {
+  # Terraform modules do not natively know their own version.  Use blockinfile and CD to set the version as a local variable.  This is used to automatically fetch thematching lambda zip artifact from GitHub.  We used to fetch the "latest" lambda zip but that caused drift even when users of the module didn't change their version.  Fetching the current version ensures this doesn't happen.
+  # BEGIN MANAGED VERSION
+  version = "v0.0.28" # will be kept in sync by CD
+  # END MANAGED VERSION
 }
