@@ -50,7 +50,7 @@ resource "aws_lambda_function" "cleanup_lambda" {
   role             = aws_iam_role.lambda_iam_role.arn
   function_name    = local.lambda_fn_name
   runtime          = "python3.14"
-  timeout          = 60 * 60
+  timeout          = 15 * 60 // 900s is the max timeout for a lambda
   memory_size      = 512
   handler          = "main.aws_lambda"
   architectures    = ["x86_64"]
