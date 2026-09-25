@@ -42,17 +42,6 @@ variable "lambda_log_level" {
   }
 }
 
-# optional vpc config
-variable "lambda_vpc" {
-  type = object({
-    subnet_ids                  = list(string)
-    security_group_ids          = list(string)
-    ipv6_allowed_for_dual_stack = optional(bool, "false")
-  })
-  nullable = true
-  default  = null
-}
-
 variable "lambda_zip_source" {
   type        = string
   default     = "https://github.com/anteriorcore/terraform-aws-s3-nix-lru-cache/releases/download/latest-X64-Linux/package.zip"
