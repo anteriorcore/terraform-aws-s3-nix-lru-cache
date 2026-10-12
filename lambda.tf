@@ -43,6 +43,37 @@ resource "aws_iam_role_policy_attachment" "bucket_access_lambda_policy_attachmen
   policy_arn = aws_iam_policy.bucket_access_lambda_policy.arn
 }
 
+data "aws_iam_policy_document" "capacity_provider_operator_policy" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+resource "aws_iam_role" "capacity_provider_operator_role" {
+  name               = "s3-nix-lru-cache-lmi-operator-role--${var.cache_bucket_name}"
+  assume_role_policy = data.aws_iam_policy_document.capacity_provider_operator_policy.json
+}
+resource "aws_iam_role_policy_attachment" "operator_vpc_access_attachment" {
+  role       = aws_iam_role.capacity_provider_operator_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+// Using AWS Lambda Managed Instances we can run for >15m
+resource "aws_lambda_capacity_provider" "lmi_provider" {
+  name = "s3-nix-lru-cache-cap--${var.cache_bucket_name}"
+  permissions_config {
+    capacity_provider_operator_role_arn = aws_iam_role.capacity_provider_operator_role.arn
+  }
+  vpc_config {
+    subnet_ids         = aws_subnet.private_subnet[*].id
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+  depends_on = [aws_iam_role_policy_attachment.operator_vpc_access_attachment]
+}
+
 locals {
   lambda_fn_name = "s3-nix-lru-cache--${var.cache_bucket_name}"
 }
@@ -50,15 +81,23 @@ resource "aws_lambda_function" "cleanup_lambda" {
   role             = aws_iam_role.lambda_iam_role.arn
   function_name    = local.lambda_fn_name
   runtime          = "python3.14"
-  timeout          = 15 * 60 // 900s is the max timeout for a lambda
-  memory_size      = 512
+  timeout          = 60 * 60 // requires LMI for >15m
+  memory_size      = 2048    // LMI requires min 2048
   handler          = "main.aws_lambda"
   architectures    = ["x86_64"]
   package_type     = "Zip"
   s3_bucket        = aws_s3_object.package_zip_object.bucket
   s3_key           = aws_s3_object.package_zip_object.key
   source_code_hash = base64sha256(data.http.package_zip.response_body_base64)
+  publish          = true
+  publish_to       = "LATEST_PUBLISHED"
   depends_on       = [aws_iam_role.lambda_iam_role]
+
+  capacity_provider_config {
+    lambda_managed_instances_capacity_provider_config {
+      capacity_provider_arn = aws_lambda_capacity_provider.lmi_provider.arn
+    }
+  }
 
   environment {
     variables = tomap({
@@ -70,19 +109,6 @@ resource "aws_lambda_function" "cleanup_lambda" {
       # A bit hokey, but the actual "assumed role" that shows up in the access logs is this thing.
       ROLE = "arn:aws:sts::${data.aws_caller_identity.current.account_id}:assumed-role/${aws_iam_role.lambda_iam_role.name}/${local.lambda_fn_name}"
     })
-  }
-
-  dynamic "vpc_config" {
-    # tf idiom to set a block conditionally
-    for_each = var.lambda_vpc != null ? toset([1]) : toset([])
-    content {
-      # Apparently there's no way to directly take this variable object or
-      # splat it here.  Allegedly that's a feature not a bug to decouple
-      # variables from provider definitions...
-      subnet_ids                  = var.lambda_vpc.subnet_ids
-      security_group_ids          = var.lambda_vpc.security_group_ids
-      ipv6_allowed_for_dual_stack = var.lambda_vpc.ipv6_allowed_for_dual_stack
-    }
   }
 
 }
