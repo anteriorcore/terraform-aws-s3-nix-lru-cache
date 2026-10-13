@@ -23,18 +23,23 @@ object protection: We have to specify for how long to keep it protected.
     to save or ??. Complicated and annoying.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import aioboto3
-import types_aiobotocore_s3
 from aiobotocore.response import StreamingBody
-from types_aiobotocore_s3.service_resource import ObjectSummary
+
+# these imports are big and aws lambda gets mad at 2GiB of memory on init
+if TYPE_CHECKING:
+    import types_aiobotocore_s3
+    from types_aiobotocore_s3.service_resource import ObjectSummary
 
 logger = logging.getLogger(__name__)
 
