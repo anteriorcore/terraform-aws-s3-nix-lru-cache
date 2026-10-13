@@ -83,8 +83,9 @@ resource "aws_lambda_function" "cleanup_lambda" {
   runtime       = "python3.14"
   // Sadly, even though LMI allows for timeout greater than 900, the AWS
   // terraform module does not support this yet.
-  timeout          = 15 * 60
-  memory_size      = 2048 // LMI requires min 2048
+  timeout = 15 * 60
+  // about 2 vcpu and enough working RAM to avoid cleanup
+  memory_size      = 4096
   handler          = "main.aws_lambda"
   architectures    = ["x86_64"]
   package_type     = "Zip"
