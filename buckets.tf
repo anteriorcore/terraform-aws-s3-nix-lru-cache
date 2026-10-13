@@ -14,7 +14,7 @@ resource "aws_s3_bucket" "cache_bucket" {
 resource "aws_s3_bucket_versioning" "cache_bucket_versioning" {
   bucket = aws_s3_bucket.cache_bucket.id
   versioning_configuration {
-    status = "Enabled"
+    status = "Disabled"
   }
 }
 
