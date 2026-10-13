@@ -59,7 +59,7 @@ resource "aws_iam_role" "capacity_provider_operator_role" {
 }
 resource "aws_iam_role_policy_attachment" "operator_vpc_access_attachment" {
   role       = aws_iam_role.capacity_provider_operator_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  policy_arn = "arn:aws:iam::aws:policy/AWSLambdaManagedEC2ResourceOperator"
 }
 // Using AWS Lambda Managed Instances we can run for >15m
 resource "aws_lambda_capacity_provider" "lmi_provider" {
