@@ -98,7 +98,8 @@ resource "aws_lambda_function" "cleanup_lambda" {
 
   capacity_provider_config {
     lambda_managed_instances_capacity_provider_config {
-      capacity_provider_arn = aws_lambda_capacity_provider.lmi_provider.arn
+      capacity_provider_arn                     = aws_lambda_capacity_provider.lmi_provider.arn
+      per_execution_environment_max_concurrency = 1
     }
   }
 
