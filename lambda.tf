@@ -78,11 +78,13 @@ locals {
   lambda_fn_name = "s3-nix-lru-cache--${var.cache_bucket_name}"
 }
 resource "aws_lambda_function" "cleanup_lambda" {
-  role             = aws_iam_role.lambda_iam_role.arn
-  function_name    = local.lambda_fn_name
-  runtime          = "python3.14"
-  timeout          = 60 * 60 // requires LMI for >15m
-  memory_size      = 2048    // LMI requires min 2048
+  role          = aws_iam_role.lambda_iam_role.arn
+  function_name = local.lambda_fn_name
+  runtime       = "python3.14"
+  // Sadly, even though LMI allows for timeout greater than 900, the AWS
+  // terraform module does not support this yet.
+  timeout          = 15 * 60
+  memory_size      = 2048 // LMI requires min 2048
   handler          = "main.aws_lambda"
   architectures    = ["x86_64"]
   package_type     = "Zip"
