@@ -24,22 +24,31 @@ object protection: We have to specify for how long to keep it protected.
 """
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, TypedDict
+import sys
 
 import aioboto3
 import types_aiobotocore_s3
 from aiobotocore.response import StreamingBody
-from types_aiobotocore_s3.service_resource import ObjectSummary
+from types_aiobotocore_s3.service_resource import Bucket, ObjectSummary
+from botocore.config import Config
 
+logging.basicConfig(
+    # level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stderr,
+)
 logger = logging.getLogger(__name__)
 
-KEEP_SMALLER_THAN = (2**10) ** 3
-N_WORKERS = 50
+# KEEP_SMALLER_THAN = (2**10) ** 3
+KEEP_SMALLER_THAN = 0
+N_WORKERS = 300  # NOMERGE
 
 
 async def create_worker[P, R](
@@ -65,14 +74,21 @@ async def read_obj_lines(obj: HasStreamingBody) -> list[str]:
         return (await body.read()).decode("utf-8").strip().split("\n")
 
 
-async def parse_logs_obj(obj: ObjectSummary, role: str) -> set[str]:
-    lines = await read_obj_lines(await obj.get())
+async def parse_logs_obj(
+    key: str,
+    s3c: types_aiobotocore_s3.Client,
+    bucket: str,
+    ignore_roles: set[str],
+) -> set[str]:
+    resp = await s3c.get_object(Bucket=bucket, Key=key)
+    lines = await read_obj_lines(resp)
     lines_split = (x.split(" ") for x in lines)
     o: set[str] = set()
     for x in lines_split:
-        logger.debug(f"{role=} logs_role={x[5]} ignored={role in x[5]}")
-        # ignore the cleaner script iam role
-        if role not in x[5]:
+        # ignore the cleaner script iam role and other roles
+        ignore = any(x[5] in role for role in ignore_roles)
+        # logger.debug(f"{ignore_roles=} logs_role={x[5]} ignored={ignore}") # NOMERGE
+        if not ignore:
             o.add(x[8])
     return o
 
@@ -81,24 +97,24 @@ async def del_if_not_whitelisted(
     obj: ObjectSummary,
     save: set[str],
 ) -> None:
-    if obj.key in save | {"nix-cache-info"}:
-        logger.debug(f"saving {obj.key} from deletion because whitelist")
+    if obj.key in save:
+        # logger.debug(f"saving {obj.key} from deletion because whitelist")
         return
     if (size := await obj.size) < KEEP_SMALLER_THAN:
-        logger.debug(
-            f"saving {obj.key} from deletion because {
-                size=} < {KEEP_SMALLER_THAN}"
-        )
+        # logger.debug(
+        #     f"saving {obj.key} from deletion because {
+        #         size=} < {KEEP_SMALLER_THAN}"
+        # )
         return
     # Takes a while to propagate the access logs, so spare everything written
     # in the last day
     if (
         datetime.now(timezone.utc) - (last_modified := await obj.last_modified)
     ).days < 1:
-        logger.debug(
-            f"saving {obj.key} from deletion because {
-                last_modified=} within the last day"
-        )
+        # logger.debug(
+        #     f"saving {obj.key} from deletion because {
+        #         last_modified=} within the last day"
+        # )
         return
 
     logger.debug(f"deleting {obj.key}")
@@ -120,6 +136,14 @@ async def get_and_parse_narinfo(
     return lines[1].split("URL: ")[1]
 
 
+def parse_extra_ignore_roles(extra_ignore_roles: str) -> set[str]:
+    match json.loads(extra_ignore_roles):
+        case list() as items if all(type(x) is str for x in items):
+            return set(items)
+        case _:
+            raise TypeError("extra_ignore_roles must be a json list of strings")
+
+
 async def main(
     *,
     cache_logs_name: str,
@@ -127,33 +151,54 @@ async def main(
     logs_key_prefix: str,
     log_level: str,
     role: str,
+    extra_ignore_roles: str,
 ) -> None:
     logger.setLevel(log_level)
 
-    session = aioboto3.Session()
+    ignore_roles = parse_extra_ignore_roles(extra_ignore_roles) | {role}
+    logger.debug(f"roles = {ignore_roles}")
 
+    session = aioboto3.Session()
+    logger.debug("hi debug")
+    logger.info("hi info")
+
+    s3_config = Config(
+        max_pool_connections=N_WORKERS,
+        retries={"max_attempts": 5, "mode": "adaptive"},
+    )
     s3r: types_aiobotocore_s3.ServiceResource
     s3c: types_aiobotocore_s3.Client
-    async with session.resource("s3") as s3r, session.client("s3") as s3c:
+    async with (
+        session.resource("s3", config=s3_config) as s3r,
+        session.client("s3", config=s3_config) as s3c,
+    ):
         bucket = await s3r.Bucket(cache_logs_name)
 
         # 1a. get logs phase including binaries to whitelist, and narinfo to
         # whitelist and follow
         logs_out: set[str] = set()
-        parse_q: asyncio.Queue[ObjectSummary] = asyncio.Queue(maxsize=N_WORKERS)
+        parse_q: asyncio.Queue[str] = asyncio.Queue(maxsize=N_WORKERS)
 
         async def enqueue_parse() -> None:
-            async for parse_job in bucket.objects.filter(
-                Prefix=logs_key_prefix,
+            paginator = s3c.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(
+                Bucket=cache_logs_name, Prefix=logs_key_prefix
             ):
-                await parse_q.put(parse_job)
+                for item in page.get("Contents", []):
+                    if key := item.get("Key"):
+                        await parse_q.put(key)
             parse_q.shutdown()
 
         _ = await asyncio.gather(
             enqueue_parse(),
             *(
                 create_worker(
-                    fn=partial(parse_logs_obj, role=role),
+                    fn=partial(
+                        parse_logs_obj,
+                        s3c=s3c,
+                        bucket=cache_logs_name,
+                        ignore_roles=ignore_roles,
+                    ),
                     q=parse_q,
                     update_fn=logs_out.update,
                 )
@@ -164,9 +209,10 @@ async def main(
         # They are closer to TRACE or print debugging, but still useful for
         # now.  Can't all be one log because it will overrun the allowed log
         # message size.
-        logger.debug("logs_out=")
-        for log in logs_out:
-            logger.debug(log)
+        # logger.debug("logs_out=")
+        # for log in logs_out:
+        #     logger.debug(log)
+        logger.debug(f"{len(logs_out)=}")
 
         # 1b. follow narinfo files and add to whitelist
         nar_out: set[str] = set()
@@ -194,14 +240,16 @@ async def main(
                 for _ in range(N_WORKERS)
             ),
         )
-        logger.debug("nar_out=")
-        for nar in nar_out:
-            logger.debug(nar)
+        # logger.debug("nar_out=")
+        # for nar in nar_out:
+        # logger.debug(nar)
 
         save = nar_out | logs_out
-        logger.debug("save=")
-        for s in save:
-            logger.debug(s)
+        # logger.debug("save=")
+        # for s in save:
+        #     logger.debug(s)
+        logger.debug(f"{len(save)=}")
+        save.add("nix-cache-info")
 
         # 2. deletion phase, saving whitelisted files
         cache = await s3r.Bucket(cache_name)
@@ -235,5 +283,10 @@ def aws_lambda(*args: str, **kwargs: dict[str, Any]) -> None:
             log_level=os.environ["LOG_LEVEL"],
             logs_key_prefix=os.environ["LOGS_KEY_PREFIX"],
             role=os.environ["ROLE"],
+            extra_ignore_roles=os.environ["EXTRA_IGNORE_ROLES"],
         )
     )
+
+
+if __name__ == "__main__":
+    aws_lambda()
