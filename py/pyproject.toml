@@ -4,12 +4,12 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "aioboto3>=15.5.0",
-    "types-aiobotocore-s3>=3.9.1",
+    "types-aiobotocore-s3>=3.9.2",
 ]
 
 [dependency-groups]
 dev = [
-    "mypy>=2.3.1",
+    "mypy>=2.4.0",
     "types-aioboto3[s3]>=13.2.0.post3",
 ]
 
